@@ -67,6 +67,23 @@ option notifications osc`
 	require.Equal(t, "osc", opts["notifications"])
 }
 
+func TestOptionUI_AvatarPath(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	script := `option ui avatar-path 'C:\Users\me\avatar.vrm'`
+	path := filepath.Join(dir, "crushrc")
+
+	jsonBytes, err := LoadShellConfig(t.Context(), path, []byte(script))
+	require.NoError(t, err)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(jsonBytes, &result))
+	options := result["options"].(map[string]any)
+	tui := options["tui"].(map[string]any)
+	require.Equal(t, `C:\Users\me\avatar.vrm`, tui["avatar_path"])
+}
+
 func TestOption_List(t *testing.T) {
 	t.Parallel()
 

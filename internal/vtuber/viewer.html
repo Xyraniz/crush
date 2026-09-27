@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Crush VTuber</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      height: 100vh;
+      overflow: hidden;
+      background: transparent;
+    }
+    canvas { position: fixed; inset: 0; width: 100%; height: 100%; }
+    #message { position: fixed; z-index: 1; left: 8px; right: 8px; bottom: 8px; display: none; text-align: center; color: #ff9eae; font: 12px system-ui, sans-serif; text-shadow: 0 1px 3px #000; pointer-events: none; }
+    #message.error { display: block; }
+  </style>
+  <script>
+    window.addEventListener('error', () => setError('Could not load the 3D renderer. Check your internet connection.'));
+    window.addEventListener('unhandledrejection', () => setError('Could not load the avatar. Check the VRM file and internet connection.'));
+    function setError(text) {
+      document.getElementById('message').className = 'error';
+      document.getElementById('message').textContent = text;
+    }
+  </script>
+</head>
+<body>
+  <div id="message"></div>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+        "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.5.5/lib/three-vrm.module.js"
+      }
+    }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+
+    if (new URLSearchParams(window.location.search).has('browser')) {
+      document.body.style.background = 'radial-gradient(ellipse at 50% 34%, #34305c 0%, #19172e 48%, #10101c 100%)';
+    }
+
+    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x000000, 0);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.NoToneMapping;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.add(new THREE.HemisphereLight(0xdcd5ff, 0x29223f, 0.45));
+    const keyLight = new THREE.DirectionalLight(0xfff5ed, 0.75);
+    keyLight.position.set(-1.5, 2.5, 3);
+    scene.add(keyLight);
+    const fillLight = new THREE.DirectionalLight(0xaaa2ff, 0.2);
+    fillLight.position.set(2, 1, -2);
+    scene.add(fillLight);
+
+    const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
+    let currentVRM;
+    let head;
+    let baseY = 0;
+    let nextBlink = 0;
+    let blinkUntil = 0;
+    let revision = 0;
+    let loadID = 0;
+    let stopped = false;
+    const clock = new THREE.Clock();
+    const message = document.getElementById('message');
+    const resize = () => {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      renderer.setSize(width, height);
+    };
+    window.addEventListener('resize', resize);
+    resize();
+
+    const loader = new GLTFLoader();
+    loader.register((parser) => new VRMLoaderPlugin(parser));
+    const token = window.location.pathname.slice(1);
+
+    function disposeAvatar() {
+      if (!currentVRM) return;
+      scene.remove(currentVRM.scene);
+      VRMUtils.deepDispose(currentVRM.scene);
+      currentVRM = undefined;
+      head = undefined;
+    }
+
+    function loadAvatar(id) {
+      message.className = '';
+      message.textContent = 'Loading avatar…';
+      loader.load(`/${token}/model.vrm`, (gltf) => {
+        if (id !== loadID) {
+          VRMUtils.deepDispose(gltf.scene);
+          return;
+        }
+        const nextVRM = gltf.userData.vrm;
+        VRMUtils.rotateVRM0(nextVRM);
+        const leftArm = nextVRM.humanoid?.getNormalizedBoneNode('leftUpperArm');
+        const rightArm = nextVRM.humanoid?.getNormalizedBoneNode('rightUpperArm');
+        if (leftArm) leftArm.rotation.z = -0.95;
+        if (rightArm) rightArm.rotation.z = 0.95;
+        nextVRM.scene.traverse((object) => { object.frustumCulled = false; });
+        const bounds = new THREE.Box3().setFromObject(nextVRM.scene);
+        const size = bounds.getSize(new THREE.Vector3());
+        const center = bounds.getCenter(new THREE.Vector3());
+        const height = Math.max(size.y, 1);
+        const oldVRM = currentVRM;
+        currentVRM = nextVRM;
+        scene.add(currentVRM.scene);
+        if (oldVRM) {
+          scene.remove(oldVRM.scene);
+          VRMUtils.deepDispose(oldVRM.scene);
+        }
+        baseY = currentVRM.scene.position.y;
+        camera.position.set(center.x, center.y + height * 0.05, center.z + height * 2.15);
+        camera.lookAt(center);
+        head = currentVRM.humanoid?.getNormalizedBoneNode('head');
+        nextBlink = 2 + Math.random() * 2;
+        message.className = '';
+        message.textContent = '';
+      }, (progress) => {
+        if (id === loadID && progress.total) message.textContent = `Loading avatar… ${Math.round(progress.loaded / progress.total * 100)}%`;
+      }, () => {
+        if (id === loadID) setError('Could not load the avatar. Check the VRM file and internet connection.');
+      });
+    }
+
+    async function syncAvatar() {
+      try {
+        const response = await fetch(`/${token}/version`, { cache: 'no-store' });
+        if (!response.ok) throw new Error('viewer stopped');
+        const state = await response.json();
+        if (state.revision !== revision) {
+          revision = state.revision;
+          loadID++;
+          if (state.enabled) loadAvatar(loadID);
+          else {
+            disposeAvatar();
+            message.className = '';
+            message.textContent = '';
+          }
+        }
+      } catch {
+        stopped = true;
+        loadID++;
+        disposeAvatar();
+        setError('Crush has closed. You can close this window.');
+      }
+      if (!stopped) window.setTimeout(syncAvatar, 600);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const elapsed = clock.elapsedTime;
+      const delta = Math.min(clock.getDelta(), 0.05);
+      if (currentVRM) {
+        currentVRM.update(delta);
+        currentVRM.scene.position.y = baseY + Math.sin(elapsed * 1.2) * 0.012;
+        if (head) {
+          head.rotation.y = Math.sin(elapsed * 0.45) * 0.045;
+          head.rotation.x = Math.sin(elapsed * 0.32) * 0.02;
+        }
+        if (elapsed >= nextBlink) {
+          blinkUntil = elapsed + 0.12;
+          nextBlink = elapsed + 2.2 + Math.random() * 3.2;
+        }
+        currentVRM.expressionManager?.setValue('blink', elapsed < blinkUntil ? 1 : 0);
+      }
+      renderer.render(scene, camera);
+    }
+
+    animate();
+    syncAvatar();
+  </script>
+</body>
+</html>

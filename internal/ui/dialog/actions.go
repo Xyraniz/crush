@@ -217,6 +217,14 @@ type ActionFilePickerSelected struct {
 	Path string
 }
 
+// ActionAvatarFileSelected is sent when a VRM file is selected.
+type ActionAvatarFileSelected struct {
+	Path string
+}
+
+// ActionDisableVRMAvatar disables the configured VRM avatar.
+type ActionDisableVRMAvatar struct{}
+
 // Cmd returns a command that reads the file at path and sends a
 // [message.Attachement] to the program.
 func (a ActionFilePickerSelected) Cmd() tea.Cmd {

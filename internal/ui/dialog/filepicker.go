@@ -23,6 +23,9 @@ import (
 // FilePickerID is the identifier for the FilePicker dialog.
 const FilePickerID = "filepicker"
 
+// VRMFilePickerID identifies the VRM avatar picker dialog.
+const VRMFilePickerID = "vrm-filepicker"
+
 // FilePicker is a dialog that allows users to select files or directories.
 type FilePicker struct {
 	com *common.Common
@@ -34,6 +37,8 @@ type FilePicker struct {
 	fp              filepicker.Model
 	help            help.Model
 	previewingImage bool // indicates if an image is being previewed
+	avatarPicker    bool
+	title           string
 	isTmux          bool
 
 	km struct {
@@ -59,8 +64,19 @@ var _ Dialog = (*FilePicker)(nil)
 
 // NewFilePicker creates a new [FilePicker] dialog.
 func NewFilePicker(com *common.Common) (*FilePicker, tea.Cmd) {
+	return newFilePicker(com, common.AllowedImageTypes, "Add Image", false)
+}
+
+// NewVRMFilePicker creates a file picker limited to VRM avatar files.
+func NewVRMFilePicker(com *common.Common) (*FilePicker, tea.Cmd) {
+	return newFilePicker(com, []string{".vrm"}, "Select VRM Avatar", true)
+}
+
+func newFilePicker(com *common.Common, allowedTypes []string, title string, avatarPicker bool) (*FilePicker, tea.Cmd) {
 	f := new(FilePicker)
 	f.com = com
+	f.title = title
+	f.avatarPicker = avatarPicker
 
 	help := help.New()
 	help.Styles = com.Styles.DialogHelpStyles()
@@ -97,7 +113,7 @@ func NewFilePicker(com *common.Common) (*FilePicker, tea.Cmd) {
 	)
 
 	fp := filepicker.New()
-	fp.AllowedTypes = common.AllowedImageTypes
+	fp.AllowedTypes = allowedTypes
 	fp.ShowPermissions = false
 	fp.ShowSize = false
 	fp.AutoHeight = false
@@ -188,8 +204,8 @@ func (f *FilePicker) HandleMsg(msg tea.Msg) Action {
 			}
 		}
 
-		f.previewingImage = allowed
-		if allowed && !fimage.HasTransmitted(selFile, f.imgPrevWidth, f.imgPrevHeight) {
+		f.previewingImage = allowed && !f.avatarPicker
+		if f.previewingImage && !fimage.HasTransmitted(selFile, f.imgPrevWidth, f.imgPrevHeight) {
 			f.previewingImage = false
 			img, err := loadImage(selFile)
 			if err == nil {
@@ -208,6 +224,9 @@ func (f *FilePicker) HandleMsg(msg tea.Msg) Action {
 	}
 
 	if didSelect, path := f.fp.DidSelectFile(msg); didSelect {
+		if f.avatarPicker {
+			return ActionAvatarFileSelected{Path: path}
+		}
 		return ActionFilePickerSelected{Path: path}
 	}
 
@@ -246,7 +265,7 @@ func (f *FilePicker) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 
 	rc := NewRenderContext(t, width)
 	rc.Gap = 1
-	rc.Title = "Add Image"
+	rc.Title = f.title
 	rc.Help = renderDialogHelp(t, &f.help, f, innerWidth)
 
 	if imgPrevHeight > 0 {

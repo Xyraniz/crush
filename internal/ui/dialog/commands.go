@@ -533,6 +533,10 @@ func (c *Commands) defaultCommands() []*CommandItem {
 	// Add a command for selecting notification style via picker dialog.
 	notificationLabel := "Notification Style"
 	commands = append(commands, NewCommandItem(c.com.Styles, "select_notifications", notificationLabel, "", ActionOpenDialog{DialogID: NotificationsID}))
+	commands = append(commands, NewCommandItem(c.com.Styles, "select_vrm_avatar", "Choose VRM Avatar", "", ActionOpenDialog{DialogID: VRMFilePickerID}))
+	if cfg != nil && cfg.Options != nil && cfg.Options.TUI != nil && cfg.Options.TUI.AvatarPath != "" {
+		commands = append(commands, NewCommandItem(c.com.Styles, "disable_vrm_avatar", "Disable VRM Avatar", "", ActionDisableVRMAvatar{}))
+	}
 
 	commands = append(
 		commands,

@@ -882,6 +882,10 @@
             "gruvbox-dark"
           ]
         },
+        "avatar_path": {
+          "type": "string",
+          "description": "Path to a VRM avatar shown above other windows on Windows"
+        },
         "completions": {
           "$ref": "#/$defs/Completions",
           "description": "Completions UI options"

@@ -301,6 +301,16 @@ does not execute a `crushrc` from them.)
 What about the old JSON format? It’s still supported, but it should be
 considered deprecated. See: [the config docs](./docs/config/) for details.
 
+### VRM avatar
+
+Choose **VRM Avatar** from the command palette (`ctrl+p`) to pick a local
+`.vrm` file. Crush saves the path globally under `options.tui.avatar_path`.
+On Windows, Crush shows the avatar in a transparent, click-through window above
+other apps. The window loads pinned Three.js modules from jsDelivr, so the
+first load needs an internet connection. On other platforms, Crush opens it in
+your default browser. Choose **Disable VRM Avatar** from the command palette to
+remove it.
+
 > [!TIP]
 > You can override the user and data config locations by setting:
 >

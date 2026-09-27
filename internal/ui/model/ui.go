@@ -58,6 +58,7 @@ import (
 	"github.com/charmbracelet/crush/internal/ui/styles"
 	"github.com/charmbracelet/crush/internal/ui/util"
 	"github.com/charmbracelet/crush/internal/version"
+	"github.com/charmbracelet/crush/internal/vtuber"
 	"github.com/charmbracelet/crush/internal/workspace"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/ultraviolet/layout"
@@ -139,6 +140,12 @@ type shellStreamMsg struct {
 	PendingID string
 	Chunk     string
 	streamCh  <-chan string // unexported; used to continue draining
+}
+
+type avatarViewerUpdatedMsg struct {
+	viewer *vtuber.Viewer
+	path   string
+	err    error
 }
 
 type (
@@ -260,6 +267,8 @@ type UI struct {
 
 	dialog *dialog.Overlay
 	status *Status
+
+	avatarViewer *vtuber.Viewer
 
 	// isCanceling tracks whether the user has pressed escape once to cancel.
 	isCanceling bool
@@ -580,6 +589,9 @@ func New(com *common.Common, initialSessionID string, continueLast bool) *UI {
 // Init initializes the UI model.
 func (m *UI) Init() tea.Cmd {
 	var cmds []tea.Cmd
+	if path := m.com.Config().Options.TUI.AvatarPath; path != "" {
+		cmds = append(cmds, m.setAvatar(path, false))
+	}
 	if m.state == uiOnboarding {
 		if cmd := m.openModelsDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -624,6 +636,50 @@ func (m *UI) Init() tea.Cmd {
 	cmds = append(cmds, m.hyperCreditsTicker())
 	cmds = append(cmds, m.checkPendingMCPAuth())
 	return tea.Batch(cmds...)
+}
+
+// CloseAvatarViewer stops the avatar overlay after the TUI exits.
+func (m *UI) CloseAvatarViewer() {
+	if m.avatarViewer != nil {
+		m.avatarViewer.Close()
+	}
+}
+
+func (m *UI) setAvatar(path string, persist bool) tea.Cmd {
+	viewer := m.avatarViewer
+	previousPath := m.com.Config().Options.TUI.AvatarPath
+	return func() tea.Msg {
+		started := false
+		var err error
+		if viewer == nil {
+			if path != "" {
+				viewer, err = vtuber.Start(path)
+				started = err == nil
+			}
+		} else {
+			err = viewer.SetModelPath(path)
+		}
+		if err != nil {
+			return avatarViewerUpdatedMsg{err: err}
+		}
+
+		if persist {
+			if path == "" {
+				err = m.com.Workspace.RemoveConfigField(config.ScopeGlobal, "options.tui.avatar_path")
+			} else {
+				err = m.com.Workspace.SetConfigField(config.ScopeGlobal, "options.tui.avatar_path", path)
+			}
+			if err != nil {
+				if started {
+					viewer.Close()
+				} else if viewer != nil {
+					_ = viewer.SetModelPath(previousPath)
+				}
+				return avatarViewerUpdatedMsg{err: err}
+			}
+		}
+		return avatarViewerUpdatedMsg{viewer: viewer, path: path}
+	}
 }
 
 // loadInitialSession loads the initial session if one was specified on startup.
@@ -836,6 +892,17 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.invalidateBusyCaches()
 		if cmd := m.dispatchBusyRefresh(); cmd != nil {
 			cmds = append(cmds, cmd)
+		}
+	case avatarViewerUpdatedMsg:
+		if msg.err != nil {
+			cmds = append(cmds, util.ReportError(msg.err))
+			break
+		}
+		m.avatarViewer = msg.viewer
+		if msg.path == "" {
+			cmds = append(cmds, util.CmdHandler(util.NewInfoMsg("VRM avatar disabled")))
+		} else {
+			cmds = append(cmds, util.CmdHandler(util.NewInfoMsg("VRM avatar selected")))
 		}
 	case agentRunSubmittedMsg:
 		// A prompt was just accepted (run started or enqueued): fetch the
@@ -2086,6 +2153,12 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		if cmd := m.openDialog(msg.DialogID); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case dialog.ActionAvatarFileSelected:
+		m.dialog.CloseDialog(dialog.VRMFilePickerID)
+		cmds = append(cmds, m.setAvatar(msg.Path, true))
+	case dialog.ActionDisableVRMAvatar:
+		m.dialog.CloseDialog(dialog.CommandsID)
+		cmds = append(cmds, m.setAvatar("", true))
 
 	// Command dialog messages.
 	case dialog.ActionToggleYoloMode:
@@ -5323,6 +5396,10 @@ func (m *UI) openDialog(id string) tea.Cmd {
 		if cmd := m.openFilesDialog(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case dialog.VRMFilePickerID:
+		if cmd := m.openVRMFileDialog(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case dialog.ThemeID:
 		m.openThemeDialog()
 	case dialog.ThemeNewID:
@@ -5466,6 +5543,17 @@ func (m *UI) openFilesDialog() tea.Cmd {
 	m.dialog.OpenDialog(filePicker)
 	event.FilePickerOpened()
 
+	return cmd
+}
+
+func (m *UI) openVRMFileDialog() tea.Cmd {
+	if m.dialog.ContainsDialog(dialog.VRMFilePickerID) {
+		m.dialog.BringToFront(dialog.VRMFilePickerID)
+		return nil
+	}
+
+	filePicker, cmd := dialog.NewVRMFilePicker(m.com)
+	m.dialog.OpenDialog(filePicker)
 	return cmd
 }
 
