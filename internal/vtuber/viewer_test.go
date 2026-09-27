@@ -90,3 +90,12 @@ func TestViewerSetModelPath(t *testing.T) {
 	require.EqualValues(t, 3, viewer.model.revision)
 	viewer.model.RUnlock()
 }
+
+func TestViewerUsesWindowsColorKeyAndLoweredArmPose(t *testing.T) {
+	t.Parallel()
+
+	require.EqualValues(t, 0x0000FF00, overlayColorKey)
+	require.Contains(t, viewerHTML, "background: #00ff00;")
+	require.Contains(t, viewerHTML, "leftArm.rotation.z = 0.95;")
+	require.Contains(t, viewerHTML, "rightArm.rotation.z = -0.95;")
+}

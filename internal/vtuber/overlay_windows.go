@@ -26,27 +26,21 @@ const (
 	windowExToolWindow  = 0x00000080
 	windowExNoActivate  = 0x08000000
 	windowTopmost       = ^uintptr(0)
-	layeredAlpha        = 0x00000002
+	layeredColorKey     = 0x00000001
 	swpNoActivate       = 0x0010
 	swpFrameChanged     = 0x0020
 )
 
 var (
-	user32                       = syscall.NewLazyDLL("user32.dll")
-	kernel32                     = syscall.NewLazyDLL("kernel32.dll")
-	dwmapi                       = syscall.NewLazyDLL("dwmapi.dll")
-	setLastError                 = kernel32.NewProc("SetLastError")
-	getWindowLongPtrW            = user32.NewProc("GetWindowLongPtrW")
-	setWindowLongPtrW            = user32.NewProc("SetWindowLongPtrW")
-	setWindowPos                 = user32.NewProc("SetWindowPos")
-	setLayeredWindowAttributes   = user32.NewProc("SetLayeredWindowAttributes")
-	getSystemMetrics             = user32.NewProc("GetSystemMetrics")
-	dwmExtendFrameIntoClientArea = dwmapi.NewProc("DwmExtendFrameIntoClientArea")
+	user32                     = syscall.NewLazyDLL("user32.dll")
+	kernel32                   = syscall.NewLazyDLL("kernel32.dll")
+	setLastError               = kernel32.NewProc("SetLastError")
+	getWindowLongPtrW          = user32.NewProc("GetWindowLongPtrW")
+	setWindowLongPtrW          = user32.NewProc("SetWindowLongPtrW")
+	setWindowPos               = user32.NewProc("SetWindowPos")
+	setLayeredWindowAttributes = user32.NewProc("SetLayeredWindowAttributes")
+	getSystemMetrics           = user32.NewProc("GetSystemMetrics")
 )
-
-type dwmMargins struct {
-	left, right, top, bottom int32
-}
 
 type overlayResult struct {
 	window glaze.WebView
@@ -75,7 +69,7 @@ type webView2Controller2 struct {
 }
 
 type webView2Color struct {
-	red, green, blue, alpha byte
+	alpha, red, green, blue byte
 }
 
 var iidWebView2Controller2 = struct {
@@ -91,8 +85,8 @@ func openOverlay(url string) (func(), error) {
 	go func() {
 		window, err := func() (glaze.WebView, error) {
 			previous, hadPrevious := os.LookupEnv("WEBVIEW2_DEFAULT_BACKGROUND_COLOR")
-			if err := os.Setenv("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "00000000"); err != nil {
-				return nil, fmt.Errorf("enable transparent WebView2 background: %w", err)
+			if err := os.Setenv("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "FF00FF00"); err != nil {
+				return nil, fmt.Errorf("set WebView2 overlay color key: %w", err)
 			}
 			defer func() {
 				if hadPrevious {
@@ -108,7 +102,7 @@ func openOverlay(url string) (func(), error) {
 			close(done)
 			return
 		}
-		if err := setTransparentWebViewBackground(window); err != nil {
+		if err := setWebViewColorKeyBackground(window); err != nil {
 			window.Destroy()
 			ready <- overlayResult{err: err}
 			close(done)
@@ -151,20 +145,20 @@ func openOverlay(url string) (func(), error) {
 	}, nil
 }
 
-func setTransparentWebViewBackground(window glaze.WebView) error {
+func setWebViewColorKeyBackground(window glaze.WebView) error {
 	// glaze v0.0.54 exposes the HWND but not its WebView2 controller.
 	// ponytail: depends on Glaze's private controller field; replace when it exposes a setter.
 	value := reflect.ValueOf(window)
 	if value.Kind() != reflect.Ptr || value.IsNil() {
-		return fmt.Errorf("enable transparent WebView2 background: unsupported glaze webview")
+		return fmt.Errorf("set WebView2 overlay color key: unsupported glaze webview")
 	}
 	controllerField := value.Elem().FieldByName("controller")
 	if !controllerField.IsValid() || controllerField.Kind() != reflect.Uintptr {
-		return fmt.Errorf("enable transparent WebView2 background: glaze controller is unavailable")
+		return fmt.Errorf("set WebView2 overlay color key: glaze controller is unavailable")
 	}
 	controller := controllerField.Uint()
 	if controller == 0 {
-		return fmt.Errorf("enable transparent WebView2 background: WebView2 controller is not ready")
+		return fmt.Errorf("set WebView2 overlay color key: WebView2 controller is not ready")
 	}
 
 	controllerHandle := uintptr(controller)
@@ -173,7 +167,7 @@ func setTransparentWebViewBackground(window glaze.WebView) error {
 	hresult, _, _ := syscall.SyscallN(base.vtbl.queryInterface, controllerHandle, uintptr(unsafe.Pointer(&iidWebView2Controller2)), uintptr(unsafe.Pointer(&controller2)))
 	runtime.KeepAlive(&iidWebView2Controller2)
 	if int32(hresult) < 0 {
-		return fmt.Errorf("enable transparent WebView2 background: QueryInterface failed (HRESULT 0x%08X)", uint32(hresult))
+		return fmt.Errorf("set WebView2 overlay color key: QueryInterface failed (HRESULT 0x%08X)", uint32(hresult))
 	}
 	defer func() {
 		view := (*iUnknown)(pointerFromUintptr(controller2))
@@ -181,18 +175,20 @@ func setTransparentWebViewBackground(window glaze.WebView) error {
 	}()
 
 	view := (*webView2Controller2)(pointerFromUintptr(controller2))
-	hresult, _, _ = syscall.SyscallN(view.vtbl.putDefaultBackgroundColor, controller2, 0)
+	color := webView2Color{alpha: 255, green: 255}
+	colorValue := *(*uint32)(unsafe.Pointer(&color))
+	hresult, _, _ = syscall.SyscallN(view.vtbl.putDefaultBackgroundColor, controller2, uintptr(colorValue))
 	if int32(hresult) < 0 {
-		return fmt.Errorf("enable transparent WebView2 background: set color failed (HRESULT 0x%08X)", uint32(hresult))
+		return fmt.Errorf("set WebView2 overlay color key: set color failed (HRESULT 0x%08X)", uint32(hresult))
 	}
 	var background webView2Color
 	hresult, _, _ = syscall.SyscallN(view.vtbl.getDefaultBackgroundColor, controller2, uintptr(unsafe.Pointer(&background)))
 	runtime.KeepAlive(&background)
 	if int32(hresult) < 0 {
-		return fmt.Errorf("enable transparent WebView2 background: could not verify color (HRESULT 0x%08X)", uint32(hresult))
+		return fmt.Errorf("set WebView2 overlay color key: could not verify color (HRESULT 0x%08X)", uint32(hresult))
 	}
-	if background.alpha != 0 {
-		return fmt.Errorf("enable transparent WebView2 background: runtime kept alpha at %d", background.alpha)
+	if background != color {
+		return fmt.Errorf("set WebView2 overlay color key: runtime kept color %02X%02X%02X%02X", background.alpha, background.red, background.green, background.blue)
 	}
 	return nil
 }
@@ -221,17 +217,12 @@ func setOverlayWindow(handle unsafe.Pointer) error {
 		return fmt.Errorf("enable avatar overlay styles: %w", err)
 	}
 	setLastError.Call(0)
-	result, _, err := setLayeredWindowAttributes.Call(hwnd, 0, 255, layeredAlpha)
+	result, _, err := setLayeredWindowAttributes.Call(hwnd, overlayColorKey, 0, layeredColorKey)
 	if result == 0 {
 		if err == syscall.Errno(0) {
-			return fmt.Errorf("enable transparent avatar overlay failed")
+			return fmt.Errorf("enable avatar color key failed")
 		}
-		return fmt.Errorf("enable transparent avatar overlay: %w", err)
-	}
-	margins := dwmMargins{-1, -1, -1, -1}
-	result, _, _ = dwmExtendFrameIntoClientArea.Call(hwnd, uintptr(unsafe.Pointer(&margins)))
-	if int32(result) < 0 {
-		return fmt.Errorf("enable transparent avatar surface: DwmExtendFrameIntoClientArea failed (HRESULT 0x%08X)", uint32(result))
+		return fmt.Errorf("enable avatar color key: %w", err)
 	}
 	screenWidth, _, _ := getSystemMetrics.Call(0)  // SM_CXSCREEN.
 	screenHeight, _, _ := getSystemMetrics.Call(1) // SM_CYSCREEN.

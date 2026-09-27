@@ -11,7 +11,7 @@
       margin: 0;
       height: 100vh;
       overflow: hidden;
-      background: transparent;
+      background: #00ff00;
     }
     canvas { position: fixed; inset: 0; width: 100%; height: 100%; }
     #message { position: fixed; z-index: 1; left: 8px; right: 8px; bottom: 8px; display: none; text-align: center; color: #ff9eae; font: 12px system-ui, sans-serif; text-shadow: 0 1px 3px #000; pointer-events: none; }
@@ -54,12 +54,12 @@
     document.body.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    scene.add(new THREE.HemisphereLight(0xdcd5ff, 0x29223f, 0.45));
-    const keyLight = new THREE.DirectionalLight(0xfff5ed, 0.75);
-    keyLight.position.set(-1.5, 2.5, 3);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x877b88, 0.7));
+    const keyLight = new THREE.DirectionalLight(0xffffff, 0.9);
+    keyLight.position.set(-1, 2.5, 4);
     scene.add(keyLight);
-    const fillLight = new THREE.DirectionalLight(0xaaa2ff, 0.2);
-    fillLight.position.set(2, 1, -2);
+    const fillLight = new THREE.DirectionalLight(0xffffff, 0.35);
+    fillLight.position.set(2, 1, 3);
     scene.add(fillLight);
 
     const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
@@ -107,8 +107,8 @@
         VRMUtils.rotateVRM0(nextVRM);
         const leftArm = nextVRM.humanoid?.getNormalizedBoneNode('leftUpperArm');
         const rightArm = nextVRM.humanoid?.getNormalizedBoneNode('rightUpperArm');
-        if (leftArm) leftArm.rotation.z = -0.95;
-        if (rightArm) rightArm.rotation.z = 0.95;
+        if (leftArm) leftArm.rotation.z = 0.95;
+        if (rightArm) rightArm.rotation.z = -0.95;
         nextVRM.scene.traverse((object) => { object.frustumCulled = false; });
         const bounds = new THREE.Box3().setFromObject(nextVRM.scene);
         const size = bounds.getSize(new THREE.Vector3());
