@@ -19,8 +19,6 @@ import (
 //go:embed viewer.html
 var viewerHTML string
 
-const overlayColorKey = 0x0000FF00 // Windows COLORREF for #00ff00.
-
 // Viewer serves one local VRM to its desktop overlay.
 type Viewer struct {
 	server       *http.Server
