@@ -219,11 +219,6 @@ func setOverlayWindow(handle unsafe.Pointer) error {
 	if _, _, err = setWindowLongPtrW.Call(hwnd, windowExStyleIndex, exStyle|windowExTransparent|windowExToolWindow|windowExNoActivate); err != syscall.Errno(0) {
 		return fmt.Errorf("enable avatar overlay styles: %w", err)
 	}
-	margins := dwmMargins{-1, -1, -1, -1}
-	result, _, _ := dwmExtendFrameIntoClientArea.Call(hwnd, uintptr(unsafe.Pointer(&margins)))
-	if int32(result) < 0 {
-		return fmt.Errorf("enable transparent avatar surface: DwmExtendFrameIntoClientArea failed (HRESULT 0x%08X)", uint32(result))
-	}
 	screenWidth, _, _ := getSystemMetrics.Call(0)  // SM_CXSCREEN.
 	screenHeight, _, _ := getSystemMetrics.Call(1) // SM_CYSCREEN.
 	if screenWidth == 0 || screenHeight == 0 {
@@ -238,12 +233,17 @@ func setOverlayWindow(handle unsafe.Pointer) error {
 		y = 0
 	}
 	setLastError.Call(0)
-	result, _, err = setWindowPos.Call(hwnd, windowTopmost, uintptr(x), uintptr(y), overlayWidth, overlayHeight, swpNoActivate|swpFrameChanged)
+	result, _, err := setWindowPos.Call(hwnd, windowTopmost, uintptr(x), uintptr(y), overlayWidth, overlayHeight, swpNoActivate|swpFrameChanged)
 	if result == 0 {
 		if err == syscall.Errno(0) {
 			return fmt.Errorf("place avatar overlay above other apps failed")
 		}
 		return fmt.Errorf("place avatar overlay above other apps: %w", err)
+	}
+	margins := dwmMargins{-1, -1, -1, -1}
+	result, _, _ = dwmExtendFrameIntoClientArea.Call(hwnd, uintptr(unsafe.Pointer(&margins)))
+	if int32(result) < 0 {
+		return fmt.Errorf("enable transparent avatar surface: DwmExtendFrameIntoClientArea failed (HRESULT 0x%08X)", uint32(result))
 	}
 	return nil
 }
