@@ -18,8 +18,6 @@ const (
 	overlayWidth  = 460
 	overlayHeight = 680
 
-	windowStyleIndex    = ^uintptr(15) // GWL_STYLE (-16).
-	windowExStyleIndex  = ^uintptr(19) // GWL_EXSTYLE (-20).
 	windowPopup         = 0x80000000
 	windowExTransparent = 0x00000020
 	windowExToolWindow  = 0x00000080
@@ -33,16 +31,33 @@ var (
 	user32                       = syscall.NewLazyDLL("user32.dll")
 	kernel32                     = syscall.NewLazyDLL("kernel32.dll")
 	dwmapi                       = syscall.NewLazyDLL("dwmapi.dll")
-	setLastError                 = kernel32.NewProc("SetLastError")
-	getWindowLongPtrW            = user32.NewProc("GetWindowLongPtrW")
-	setWindowLongPtrW            = user32.NewProc("SetWindowLongPtrW")
+	registerClassExW             = user32.NewProc("RegisterClassExW")
+	createWindowExW              = user32.NewProc("CreateWindowExW")
+	destroyWindow                = user32.NewProc("DestroyWindow")
+	defWindowProcW               = user32.NewProc("DefWindowProcW")
 	setWindowPos                 = user32.NewProc("SetWindowPos")
 	getSystemMetrics             = user32.NewProc("GetSystemMetrics")
+	getModuleHandleW             = kernel32.NewProc("GetModuleHandleW")
 	dwmExtendFrameIntoClientArea = dwmapi.NewProc("DwmExtendFrameIntoClientArea")
 )
 
 type dwmMargins struct {
 	left, right, top, bottom int32
+}
+
+type windowClassEx struct {
+	size        uint32
+	style       uint32
+	windowProc  uintptr
+	classExtra  int32
+	windowExtra int32
+	instance    uintptr
+	icon        uintptr
+	cursor      uintptr
+	background  uintptr
+	menuName    *uint16
+	className   *uint16
+	iconSmall   uintptr
 }
 
 type overlayResult struct {
@@ -86,6 +101,14 @@ func openOverlay(url string) (func(), error) {
 	ready := make(chan overlayResult, 1)
 	done := make(chan struct{})
 	go func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		handle, err := createOverlayWindow()
+		if err != nil {
+			ready <- overlayResult{err: err}
+			close(done)
+			return
+		}
 		window, err := func() (glaze.WebView, error) {
 			previous, hadPrevious := os.LookupEnv("WEBVIEW2_DEFAULT_BACKGROUND_COLOR")
 			if err := os.Setenv("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "00000000"); err != nil {
@@ -98,32 +121,29 @@ func openOverlay(url string) (func(), error) {
 					_ = os.Unsetenv("WEBVIEW2_DEFAULT_BACKGROUND_COLOR")
 				}
 			}()
-			return glaze.New(false)
+			return glaze.NewWindow(false, handle)
 		}()
 		if err != nil {
+			destroyOverlayWindow(handle)
 			ready <- overlayResult{err: err}
 			close(done)
 			return
 		}
 		if err := setTransparentWebViewBackground(window); err != nil {
 			window.Destroy()
+			destroyOverlayWindow(handle)
 			ready <- overlayResult{err: err}
 			close(done)
 			return
 		}
 
 		window.SetTitle("Crush Avatar")
-		if err := setOverlayWindow(window.Window()); err != nil {
-			window.Destroy()
-			ready <- overlayResult{err: err}
-			close(done)
-			return
-		}
 		window.SetSize(overlayWidth, overlayHeight, glaze.HintFixed)
 		window.Navigate(url)
 		ready <- overlayResult{window: window}
 		window.Run()
 		window.Destroy()
+		destroyOverlayWindow(handle)
 		close(done)
 	}()
 
@@ -200,29 +220,42 @@ func pointerFromUintptr(value uintptr) unsafe.Pointer {
 	return *(*unsafe.Pointer)(unsafe.Pointer(&value))
 }
 
-func setOverlayWindow(handle unsafe.Pointer) error {
-	hwnd := uintptr(handle)
-	if hwnd == 0 {
-		return fmt.Errorf("create avatar overlay: invalid window handle")
+var overlayWindowClass struct {
+	sync.Once
+	err error
+}
+
+func createOverlayWindow() (unsafe.Pointer, error) {
+	overlayWindowClass.Do(func() {
+		className, err := syscall.UTF16PtrFromString("CrushAvatarOverlay")
+		if err != nil {
+			overlayWindowClass.err = err
+			return
+		}
+		instance, _, _ := getModuleHandleW.Call(0)
+		class := windowClassEx{
+			size:       uint32(unsafe.Sizeof(windowClassEx{})),
+			windowProc: defWindowProcW.Addr(),
+			instance:   instance,
+			className:  className,
+		}
+		atom, _, err := registerClassExW.Call(uintptr(unsafe.Pointer(&class)))
+		runtime.KeepAlive(&class)
+		if atom == 0 {
+			if err == syscall.Errno(0) {
+				err = syscall.Errno(1)
+			}
+			overlayWindowClass.err = fmt.Errorf("register avatar overlay window: %w", err)
+		}
+	})
+	if overlayWindowClass.err != nil {
+		return nil, overlayWindowClass.err
 	}
-	setLastError.Call(0)
-	style, _, err := setWindowLongPtrW.Call(hwnd, windowStyleIndex, windowPopup)
-	if style == 0 && err != syscall.Errno(0) {
-		return fmt.Errorf("remove avatar window frame: %w", err)
-	}
-	setLastError.Call(0)
-	exStyle, _, err := getWindowLongPtrW.Call(hwnd, windowExStyleIndex)
-	if err != syscall.Errno(0) {
-		return fmt.Errorf("read avatar window style: %w", err)
-	}
-	setLastError.Call(0)
-	if _, _, err = setWindowLongPtrW.Call(hwnd, windowExStyleIndex, exStyle|windowExTransparent|windowExToolWindow|windowExNoActivate); err != syscall.Errno(0) {
-		return fmt.Errorf("enable avatar overlay styles: %w", err)
-	}
+
 	screenWidth, _, _ := getSystemMetrics.Call(0)  // SM_CXSCREEN.
 	screenHeight, _, _ := getSystemMetrics.Call(1) // SM_CYSCREEN.
 	if screenWidth == 0 || screenHeight == 0 {
-		return fmt.Errorf("read screen dimensions for avatar overlay")
+		return nil, fmt.Errorf("read screen dimensions for avatar overlay")
 	}
 	x := int32(screenWidth) - overlayWidth - 24
 	y := int32(screenHeight) - overlayHeight - 48
@@ -232,18 +265,44 @@ func setOverlayWindow(handle unsafe.Pointer) error {
 	if y < 0 {
 		y = 0
 	}
-	setLastError.Call(0)
+	className, _ := syscall.UTF16PtrFromString("CrushAvatarOverlay")
+	title, _ := syscall.UTF16PtrFromString("")
+	instance, _, _ := getModuleHandleW.Call(0)
+	hwnd, _, err := createWindowExW.Call(
+		windowExTransparent|windowExToolWindow|windowExNoActivate,
+		uintptr(unsafe.Pointer(className)),
+		uintptr(unsafe.Pointer(title)),
+		windowPopup,
+		uintptr(x), uintptr(y), overlayWidth, overlayHeight,
+		0, 0, instance, 0,
+	)
+	runtime.KeepAlive(className)
+	runtime.KeepAlive(title)
+	if hwnd == 0 {
+		if err == syscall.Errno(0) {
+			err = syscall.Errno(1)
+		}
+		return nil, fmt.Errorf("create avatar overlay window: %w", err)
+	}
 	result, _, err := setWindowPos.Call(hwnd, windowTopmost, uintptr(x), uintptr(y), overlayWidth, overlayHeight, swpNoActivate|swpFrameChanged)
 	if result == 0 {
 		if err == syscall.Errno(0) {
-			return fmt.Errorf("place avatar overlay above other apps failed")
+			err = syscall.Errno(1)
 		}
-		return fmt.Errorf("place avatar overlay above other apps: %w", err)
+		destroyWindow.Call(hwnd)
+		return nil, fmt.Errorf("place avatar overlay above other apps: %w", err)
 	}
 	margins := dwmMargins{-1, -1, -1, -1}
 	result, _, _ = dwmExtendFrameIntoClientArea.Call(hwnd, uintptr(unsafe.Pointer(&margins)))
 	if int32(result) < 0 {
-		return fmt.Errorf("enable transparent avatar surface: DwmExtendFrameIntoClientArea failed (HRESULT 0x%08X)", uint32(result))
+		destroyWindow.Call(hwnd)
+		return nil, fmt.Errorf("enable transparent avatar surface: DwmExtendFrameIntoClientArea failed (HRESULT 0x%08X)", uint32(result))
 	}
-	return nil
+	return pointerFromUintptr(hwnd), nil
+}
+
+func destroyOverlayWindow(handle unsafe.Pointer) {
+	if handle != nil {
+		destroyWindow.Call(uintptr(handle))
+	}
 }
