@@ -45,6 +45,7 @@ func TestViewerRoutesOnlyServeTheSelectedModel(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, response.StatusCode)
 	require.Contains(t, response.Header.Get("Content-Security-Policy"), "frame-ancestors 'none'")
+	require.Contains(t, response.Header.Get("Content-Security-Policy"), "connect-src 'self' blob:")
 	require.NoError(t, response.Body.Close())
 
 	response, err = http.Get(server.URL + "/secret/version")
