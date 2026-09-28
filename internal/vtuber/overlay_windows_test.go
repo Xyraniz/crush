@@ -25,4 +25,8 @@ func TestCreateOverlayWindowUsesFinalClientSize(t *testing.T) {
 	require.NotZero(t, result)
 	require.EqualValues(t, overlayWidth, bounds.right-bounds.left)
 	require.EqualValues(t, overlayHeight, bounds.bottom-bounds.top)
+
+	sendMessage := user32.NewProc("SendMessageW")
+	hitTest, _, _ := sendMessage.Call(uintptr(handle), wmNcHitTest, 0, 0)
+	require.EqualValues(t, htCaption, hitTest)
 }
