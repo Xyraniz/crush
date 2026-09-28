@@ -22,10 +22,9 @@ const (
 	windowExTransparent = 0x00000020
 	windowExToolWindow  = 0x00000080
 	windowExNoActivate  = 0x08000000
-	wmNcHitTest         = 0x0084
-	htCaption           = 2
 	windowTopmost       = ^uintptr(0)
 	swpNoActivate       = 0x0010
+	swpNoSize           = 0x0001
 	swpFrameChanged     = 0x0020
 )
 
@@ -36,8 +35,8 @@ var (
 	registerClassExW             = user32.NewProc("RegisterClassExW")
 	createWindowExW              = user32.NewProc("CreateWindowExW")
 	destroyWindow                = user32.NewProc("DestroyWindow")
+	getWindowRect                = user32.NewProc("GetWindowRect")
 	defWindowProcW               = user32.NewProc("DefWindowProcW")
-	overlayWindowProc            = syscall.NewCallback(overlayWindowProcedure)
 	setWindowPos                 = user32.NewProc("SetWindowPos")
 	getSystemMetrics             = user32.NewProc("GetSystemMetrics")
 	getModuleHandleW             = kernel32.NewProc("GetModuleHandleW")
@@ -139,6 +138,18 @@ func openOverlay(url string) (func(), error) {
 			close(done)
 			return
 		}
+		var moveMu sync.Mutex
+		if err := window.Bind("moveAvatarWindow", func(dx, dy int) error {
+			moveMu.Lock()
+			defer moveMu.Unlock()
+			return moveOverlayWindow(handle, dx, dy)
+		}); err != nil {
+			window.Destroy()
+			destroyOverlayWindow(handle)
+			ready <- overlayResult{err: fmt.Errorf("enable avatar window dragging: %w", err)}
+			close(done)
+			return
+		}
 
 		window.SetTitle("Crush Avatar")
 		window.SetSize(overlayWidth, overlayHeight, glaze.HintFixed)
@@ -223,12 +234,36 @@ func pointerFromUintptr(value uintptr) unsafe.Pointer {
 	return *(*unsafe.Pointer)(unsafe.Pointer(&value))
 }
 
-func overlayWindowProcedure(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
-	if message == wmNcHitTest {
-		return htCaption
+type overlayWindowRect struct {
+	left, top, right, bottom int32
+}
+
+func moveOverlayWindow(handle unsafe.Pointer, dx, dy int) error {
+	if handle == nil {
+		return fmt.Errorf("move avatar overlay: invalid window handle")
 	}
-	result, _, _ := defWindowProcW.Call(hwnd, uintptr(message), wParam, lParam)
-	return result
+	var bounds overlayWindowRect
+	result, _, err := getWindowRect.Call(uintptr(handle), uintptr(unsafe.Pointer(&bounds)))
+	runtime.KeepAlive(&bounds)
+	if result == 0 {
+		if err == syscall.Errno(0) {
+			err = syscall.Errno(1)
+		}
+		return fmt.Errorf("read avatar overlay position: %w", err)
+	}
+	x := int64(bounds.left) + int64(dx)
+	y := int64(bounds.top) + int64(dy)
+	if x < -1<<31 || x > 1<<31-1 || y < -1<<31 || y > 1<<31-1 {
+		return fmt.Errorf("move avatar overlay: position out of range")
+	}
+	result, _, err = setWindowPos.Call(uintptr(handle), windowTopmost, uintptr(int32(x)), uintptr(int32(y)), 0, 0, swpNoSize|swpNoActivate)
+	if result == 0 {
+		if err == syscall.Errno(0) {
+			err = syscall.Errno(1)
+		}
+		return fmt.Errorf("move avatar overlay: %w", err)
+	}
+	return nil
 }
 
 var overlayWindowClass struct {
@@ -246,7 +281,7 @@ func createOverlayWindow() (unsafe.Pointer, error) {
 		instance, _, _ := getModuleHandleW.Call(0)
 		class := windowClassEx{
 			size:       uint32(unsafe.Sizeof(windowClassEx{})),
-			windowProc: overlayWindowProc,
+			windowProc: defWindowProcW.Addr(),
 			instance:   instance,
 			className:  className,
 		}

@@ -99,3 +99,11 @@ func TestViewerUsesTransparentBackgroundAndLoweredArmPose(t *testing.T) {
 	require.Contains(t, viewerHTML, "leftArm.rotation.z = 0.95;")
 	require.Contains(t, viewerHTML, "rightArm.rotation.z = -0.95;")
 }
+
+func TestViewerForwardsHeldPointerMovementToNativeOverlay(t *testing.T) {
+	t.Parallel()
+
+	require.Contains(t, viewerHTML, "window.addEventListener('pointerdown'")
+	require.Contains(t, viewerHTML, "window.addEventListener('pointermove'")
+	require.Contains(t, viewerHTML, "window.moveAvatarWindow(dx, dy)")
+}

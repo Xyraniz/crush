@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCreateOverlayWindowUsesFinalClientSize(t *testing.T) {
+func TestCreateOverlayWindowUsesFinalSizeAndCanMove(t *testing.T) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
@@ -26,7 +26,16 @@ func TestCreateOverlayWindowUsesFinalClientSize(t *testing.T) {
 	require.EqualValues(t, overlayWidth, bounds.right-bounds.left)
 	require.EqualValues(t, overlayHeight, bounds.bottom-bounds.top)
 
-	sendMessage := user32.NewProc("SendMessageW")
-	hitTest, _, _ := sendMessage.Call(uintptr(handle), wmNcHitTest, 0, 0)
-	require.EqualValues(t, htCaption, hitTest)
+	var before overlayWindowRect
+	result, _, _ = getWindowRect.Call(uintptr(handle), uintptr(unsafe.Pointer(&before)))
+	runtime.KeepAlive(&before)
+	require.NotZero(t, result)
+	require.NoError(t, moveOverlayWindow(handle, 7, 11))
+
+	var after overlayWindowRect
+	result, _, _ = getWindowRect.Call(uintptr(handle), uintptr(unsafe.Pointer(&after)))
+	runtime.KeepAlive(&after)
+	require.NotZero(t, result)
+	require.EqualValues(t, before.left+7, after.left)
+	require.EqualValues(t, before.top+11, after.top)
 }

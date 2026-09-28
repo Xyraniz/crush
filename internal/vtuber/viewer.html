@@ -24,6 +24,44 @@
       document.getElementById('message').className = 'error';
       document.getElementById('message').textContent = text;
     }
+    let dragPointerID;
+    let queuedMoveX = 0;
+    let queuedMoveY = 0;
+    let moveFrame = 0;
+    function flushAvatarMove() {
+      moveFrame = 0;
+      const dx = Math.trunc(queuedMoveX);
+      const dy = Math.trunc(queuedMoveY);
+      queuedMoveX -= dx;
+      queuedMoveY -= dy;
+      if ((!dx && !dy) || typeof window.moveAvatarWindow !== 'function') return;
+      window.moveAvatarWindow(dx, dy).catch((error) => {
+        setError(`Could not move avatar window: ${error.message}`);
+      });
+    }
+    window.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || typeof window.moveAvatarWindow !== 'function') return;
+      dragPointerID = event.pointerId;
+      queuedMoveX = 0;
+      queuedMoveY = 0;
+      event.target.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+    });
+    window.addEventListener('pointermove', (event) => {
+      if (event.pointerId !== dragPointerID) return;
+      if (!(event.buttons & 1)) {
+        dragPointerID = undefined;
+        return;
+      }
+      queuedMoveX += event.movementX;
+      queuedMoveY += event.movementY;
+      if (!moveFrame) moveFrame = requestAnimationFrame(flushAvatarMove);
+    });
+    const stopAvatarDrag = (event) => {
+      if (event.pointerId === dragPointerID) dragPointerID = undefined;
+    };
+    window.addEventListener('pointerup', stopAvatarDrag);
+    window.addEventListener('pointercancel', stopAvatarDrag);
   </script>
 </head>
 <body>
